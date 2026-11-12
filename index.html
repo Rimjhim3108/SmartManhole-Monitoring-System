@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Manhole Monitoring System</title>
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Chart.js CDN for live sensor graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Firebase Web SDK (Direct CDN scripts - Allows opening index.html directly by double clicking!) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- 1. HEADER SECTION -->
+    <header class="dashboard-header">
+      <div class="header-left">
+        <div class="logo-badge">
+          <svg class="manhole-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 3v18"></path>
+            <path d="M3 12h18"></path>
+            <circle cx="12" cy="12" r="4"></circle>
+          </svg>
+        </div>
+        <div class="header-titles">
+          <h1>Smart Manhole Monitoring System</h1>
+          <p class="subtitle">Real-Time Safety &amp; Unauthorized Access Detection</p>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <!-- Live Firebase Connection Status -->
+        <div id="connection-status-pill" class="status-pill disconnected">
+          <span class="status-dot"></span>
+          <span id="connection-status-text">Disconnected</span>
+        </div>
+
+        <!-- Prototype Threshold Settings Toggle -->
+        <button id="toggle-settings-btn" class="secondary-btn" title="Adjust Alert Thresholds">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+          <span>Thresholds</span>
+        </button>
+
+        <!-- Demo / Test Mode Toggle Button -->
+        <button id="toggle-sim-btn" class="secondary-btn" title="Toggle Demo Simulator">
+          <span>Demo Sim</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- SETTINGS PANEL (Collapsible for thresholds) -->
+    <div id="settings-panel" class="settings-panel hidden">
+      <div class="settings-card">
+        <div class="settings-header">
+          <h3>Configurable Sensor Thresholds (Initial Prototype)</h3>
+          <span class="settings-hint">You can adjust these thresholds live or in <code>script.js</code></span>
+        </div>
+        <div class="settings-grid">
+          <div class="setting-item">
+            <label for="input-tilt-threshold">Tilt Angle Limit (Degrees °):</label>
+            <div class="input-with-unit">
+              <input type="number" id="input-tilt-threshold" value="25" min="1" max="90" step="1">
+              <span>°</span>
+            </div>
+            <small>Tilt &gt; limit triggers Unauthorized Access</small>
+          </div>
+          <div class="setting-item">
+            <label for="input-gas-threshold">Gas Level Limit (Raw ADC):</label>
+            <div class="input-with-unit">
+              <input type="number" id="input-gas-threshold" value="400" min="50" max="2000" step="10">
+              <span>Raw ADC</span>
+            </div>
+            <small>Gas &gt; limit triggers Gas Warning</small>
+          </div>
+          <div class="setting-actions">
+            <button id="btn-save-thresholds" class="primary-btn">Apply Values</button>
+            <button id="btn-reset-thresholds" class="text-btn">Reset Defaults</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN DASHBOARD CONTENT -->
+    <main class="dashboard-main">
+
+      <!-- 2. LIVE SENSOR CARDS -->
+      <section class="cards-section">
+        <!-- Tilt Card -->
+        <div class="sensor-card" id="card-tilt">
+          <div class="card-header">
+            <span class="card-label">TILT ANGLE (MPU6050)</span>
+            <div class="card-icon tilt-icon-wrap">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 20h16"></path>
+                <path d="M6 16l12-8"></path>
+                <circle cx="6" cy="16" r="1.5"></circle>
+                <circle cx="18" cy="8" r="1.5"></circle>
+              </svg>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="value-display">
+              <span id="val-tilt-angle" class="sensor-val">--</span>
+              <span class="sensor-unit">°</span>
+            </div>
+            <div class="card-subtext">
+              <span>Threshold: <strong id="lbl-tilt-threshold">25°</strong></span>
+              <span id="tilt-delta" class="sensor-badge">Normal Tilt</span>
+            </div>
+          </div>
+          <div class="card-visual-bar">
+            <div id="bar-tilt-fill" class="bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Gas Card -->
+        <div class="sensor-card" id="card-gas">
+          <div class="card-header">
+            <span class="card-label">GAS LEVEL (MQ135)</span>
+            <div class="card-icon gas-icon-wrap">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2v6"></path>
+                <path d="M8 8a4 4 0 0 1 8 0v10a4 4 0 0 1-8 0V8z"></path>
+                <path d="M10 14h4"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="value-display">
+              <span id="val-gas-level" class="sensor-val">--</span>
+              <span class="sensor-unit">Raw ADC</span>
+            </div>
+            <div class="card-subtext">
+              <span>Threshold: <strong id="lbl-gas-threshold">Raw ADC</strong></span>
+              <span id="gas-delta" class="sensor-badge">Clean Air</span>
+            </div>
+          </div>
+          <div class="card-visual-bar">
+            <div id="bar-gas-fill" class="bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Manhole Status Card -->
+        <div class="sensor-card highlight-card" id="card-status">
+          <div class="card-header">
+            <span class="card-label">MANHOLE STATUS</span>
+            <div class="card-icon status-icon-wrap">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              </svg>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="status-banner-wrap">
+              <div id="status-badge-main" class="status-badge normal">
+                <span class="status-pulse-dot"></span>
+                <span id="val-manhole-status">NORMAL</span>
+              </div>
+            </div>
+            <div class="card-subtext center-subtext">
+              <span id="status-reason-text">All parameters within safe operating limits</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Last Updated Card -->
+        <div class="sensor-card" id="card-updated">
+          <div class="card-header">
+            <span class="card-label">LAST UPDATED</span>
+            <div class="card-icon clock-icon-wrap">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="value-display">
+              <span id="val-last-updated" class="sensor-val mono-font">--:--:--</span>
+            </div>
+            <div class="card-subtext">
+              <span id="lbl-relative-time">Awaiting Firebase data...</span>
+            </div>
+          </div>
+          <div class="source-tag">
+            <span id="data-source-badge">DB Path: <code>sensorData</code></span>
+          </div>
+        </div>
+
+        <!-- AI Prediction Card -->
+<div class="sensor-card highlight-card" id="card-ai-prediction">
+    <div class="card-header">
+        <span class="card-label">AI PREDICTION</span>
+        <div class="card-icon">🤖</div>
+    </div>
+
+    <div class="card-body">
+        <div class="status-banner-wrap">
+            <div id="ai-prediction-badge" class="status-badge normal">
+                <span class="status-pulse-dot"></span>
+                <span id="ai-prediction-value">WAITING</span>
+            </div>
+        </div>
+
+        <div class="card-subtext center-subtext">
+            <span id="ai-prediction-reason">
+                Waiting for ML model prediction...
+            </span>
+        </div>
+
+        <div class="card-subtext center-subtext">
+            Duration: <span id="ai-duration">0 sec</span>
+        </div>
+    </div>
+</div>
+      </section>
+
+      <!-- 3. LIVE GRAPH & ALERTS ROW -->
+      <section class="visuals-row">
+        <!-- Live Chart Container -->
+        <div class="chart-container-box">
+          <div class="section-title-bar">
+            <div class="title-with-desc">
+              <h2>Real-Time Sensor Trends</h2>
+              <p>Dual-axis tracking: MPU6050 Tilt angle (°) and MQ135 Gas value vs time</p>
+            </div>
+            <div class="chart-controls">
+              <span class="badge-tag">Latest 15 Samples</span>
+            </div>
+          </div>
+          <div class="canvas-wrapper">
+            <canvas id="liveSensorChart"></canvas>
+          </div>
+        </div>
+
+        <!-- 4. ALERT SECTION -->
+        <div class="alerts-container-box">
+          <div class="section-title-bar">
+            <div class="title-with-desc">
+              <h2>System Security Alerts</h2>
+              <p>Live event log from sensors &amp; classification</p>
+            </div>
+            <button id="btn-clear-alerts" class="text-btn small-btn">Clear Log</button>
+          </div>
+          <div id="alerts-list" class="alerts-list">
+            <div class="empty-alerts-state">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+              </svg>
+              <p>No active alerts. System running normally.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. RECENT SENSOR DATA TABLE -->
+      <section class="table-section">
+        <div class="section-title-bar">
+          <div class="title-with-desc">
+            <h2>Recent Sensor Telemetry Log</h2>
+            <p>Chronological feed of incoming readings from ESP32</p>
+          </div>
+          <div class="table-count-badge">
+            <span id="table-row-count">0</span> readings logged
+          </div>
+        </div>
+
+        <div class="table-responsive-wrapper">
+          <table class="sensor-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Tilt Angle (MPU6050)</th>
+                <th>Gas Value (MQ135)</th>
+                <th>Classification Status</th>
+                <th>Security Level</th>
+              </tr>
+            </thead>
+            <tbody id="telemetry-table-body">
+              <tr class="empty-row">
+                <td colspan="5">Connecting to Firebase... No records received yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="dashboard-footer">
+      <div class="footer-left">
+        <p><strong>Smart Manhole Cover Safety System</strong> &bull; B.Tech CSE Capstone IoT Project</p>
+      </div>
+      <div class="footer-right">
+        <span>Hardware: ESP32 + MPU6050 + MQ135 + Buzzer</span>
+        <span>&bull;</span>
+        <span>Cloud: Firebase Realtime Database</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Standard JavaScript file (Zero build tools, opens directly with double-click!) -->
+  <script src="script.js"></script>
+</body>
+</html>

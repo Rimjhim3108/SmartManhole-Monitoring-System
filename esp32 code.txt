@@ -1,0 +1,138 @@
+  
+/**
+ * Smart Manhole Monitoring System - ESP32 Firmware
+ * Hardware: ESP32 30-Pin + MPU6050 + MQ135 + Buzzer + Red LED
+ */
+
+#include <WiFi.h>
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <Firebase_ESP_Client.h>
+
+// 1. Wi-Fi Credentials
+#define WIFI_SSID     "YOUR_WIFI_NAME"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// 2. Firebase Configuration
+#define API_KEY  ""AIzaSyC2Uynd6QLm1NMPmD2Mmbvq0UxNh4TxHk8""
+#define DATABASE_URL  "https://smartmanhole-fedfc-default-rtdb.asia-southeast1.firebasedatabase.app/"
+#define DATABASE_SECRET "PASTE_YOUR_DATABASE_SECRET_OR_API_KEY"
+
+// 3. Hardware Pin Definitions
+#define PIN_MQ135   34  // Analog pin for MQ135 gas sensor
+#define PIN_BUZZER  25  // Digital pin for alarm buzzer
+#define PIN_LED     26  // Digital pin for alert Red LED
+
+// 4. Configurable Thresholds
+#define TILT_LIMIT  25.0  // Tilt > 25 degrees means lid is opened
+#define GAS_LIMIT   400   // MQ135 raw ADC / PPM limit
+
+Adafruit_MPU6050 mpu;
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 2500; // Send to Firebase every 2.5 seconds
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+  digitalWrite(PIN_LED, LOW);
+
+  // Initialize I2C for MPU6050 (GPIO 21 = SDA, GPIO 22 = SCL)
+  Wire.begin(21, 22);
+
+  if (!mpu.begin()) {
+    Serial.println("❌ Failed to find MPU6050 sensor!");
+  } else {
+    Serial.println("✅ MPU6050 initialized.");
+    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  }
+
+  // Connect to Wi-Fi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ Wi-Fi connected! IP: " + WiFi.localIP().toString());
+
+  // Initialize Firebase RTDB
+  config.database_url = DATABASE_URL;
+  config.api_key = API_KEY;
+  if (Firebase.signUp(&config, &auth, "", "")) {
+  Serial.println("Anonymous sign-up successful");
+} else {
+  Serial.println("Anonymous sign-up failed");
+}
+  Firebase.begin(&config, &auth);
+  Firebase.reconnectWiFi(true);
+}
+
+void loop() {
+  // Read MPU6050 Acceleration
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  // Calculate Tilt Angle relative to horizontal ground (in degrees)
+  float ax = a.acceleration.x;
+  float ay = a.acceleration.y;
+  float az = a.acceleration.z;
+  float tiltAngle = atan2(sqrt(ax * ax + ay * ay), abs(az)) * (180.0 / PI);
+
+  // Read MQ135 Gas Sensor
+  int rawGas = analogRead(PIN_MQ135);
+  // Scale 12-bit ADC (0-4095) to estimated PPM equivalent
+  int gasValue = map(rawGas, 0, 4095, 50, 1000);
+
+  // Classification Logic
+  String status = "NORMAL";
+  bool isTiltAbnormal = (tiltAngle > TILT_LIMIT);
+  bool isGasAbnormal  = (gasValue > GAS_LIMIT);
+
+  if (isTiltAbnormal && isGasAbnormal) {
+    status = "HIGH ALERT";
+    digitalWrite(PIN_BUZZER, HIGH);
+    digitalWrite(PIN_LED, HIGH);
+  } else if (isTiltAbnormal) {
+    status = "UNAUTHORIZED ACCESS";
+    digitalWrite(PIN_BUZZER, HIGH);
+    digitalWrite(PIN_LED, HIGH);
+  } else if (isGasAbnormal) {
+    status = "GAS WARNING";
+    digitalWrite(PIN_BUZZER, LOW);
+    digitalWrite(PIN_LED, HIGH); // Visual warning for gas
+  } else {
+    status = "NORMAL";
+    digitalWrite(PIN_BUZZER, LOW);
+    digitalWrite(PIN_LED, LOW);
+  }
+
+  // Transmit telemetry to Firebase every 2.5 seconds
+  if (millis() - lastSendTime > sendInterval) {
+    lastSendTime = millis();
+
+    FirebaseJson json;
+    json.set("tiltAngle", tiltAngle);
+    json.set("gasValue", gasValue);
+    json.set("status", status);
+    json.set("timestamp", String(millis() / 1000) + "s");
+
+    Serial.printf("Telemetry -> Tilt: %.1f deg | Gas: %d PPM | Status: %s\n", tiltAngle, gasValue, status.c_str());
+
+    if (Firebase.RTDB.setJSON(&fbdo, "/sensorData", &json)) {
+      Serial.println("✅ Sent to Firebase /sensorData");
+    } else {
+      Serial.println("❌ Firebase send failed: " + fbdo.errorReason());
+    }
+  }
+
+  delay(100);
+}

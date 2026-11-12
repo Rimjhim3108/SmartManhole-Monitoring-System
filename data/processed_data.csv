@@ -1,0 +1,9 @@
+tilt_angle,gas_level,duration,event,label
+2,120,1,normal,2
+5,125,2,normal,2
+45,130,5,accidental,0
+60,150,8,suspicious,3
+30,125,4,maintenance,1
+55,145,7,suspicious,3
+3,118,1,normal,2
+40,135,5,accidental,0
